@@ -1,0 +1,306 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>33.5c3</title>
+
+		<link rel="stylesheet" href="css/reveal.css">
+		<link rel="stylesheet" href="css/theme/black.css">
+
+		<!-- Theme used for syntax highlighting of code -->
+		<link rel="stylesheet" href="lib/css/zenburn.css">
+
+		<!-- Printing and PDF exports -->
+		<script>
+			var link = document.createElement( 'link' );
+			link.rel = 'stylesheet';
+			link.type = 'text/css';
+			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+			document.getElementsByTagName( 'head' )[0].appendChild( link );
+		</script>
+	</head>
+	<body>
+<div class="reveal">
+<div class="slides">
+<section>
+  <h2>Getting sighax</h2>
+  <p>Presentation by Myria</p>
+  <ul>
+    <li>We know the format of the decrypted signature, but now we need to find a signature matching that pattern.</li>
+    <li>This is brute-forcing RSA, but astronomically easier than it normally would be, thanks to Nintendo fails.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Brute Force</h2>
+  <ul>
+    <li>Back-of-napkin math suggests approximately $2^{43}$ signatures searched per match.</li>
+    <li>sighax was said by derrek to take six months <em>per signature</em>, and there are <em>six</em> signature types.</li>
+    <li class="fragment"><strong>Screw that.</strong></li>
+  </ul>
+</section>
+
+<section>
+  <h2>RSA - A Review</h2>
+  <ul>
+    <li>Signatures are made by powering by secret $d$:
+      <ul class="inside">
+        <li>$s = m^d \mod n$</li>
+      </ul>
+    </li>
+    <li>Verification is done by powering by $e$ (65537):
+      <ul>
+        <li>$v = s^e \mod n$</li>
+      </ul>
+    </li>
+    <li>If $v = m$, $s$ is a valid signature for $m$.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>The Naive Method</h2>
+  <ul>
+    <li>Calculate $m = s^{65537} \mod n$ for random $s$ until you get a useful $m$.</li>
+    <li>Very slow.
+      <ul>
+        <li>17 multiplies and 17 mods per attempt.</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>The Negation Trick</h2>
+  <ul>
+    <li>When checking $m$, also check $-m$.</li>
+    <li>If $-m$ is a match, then $-s$ is its signature.</li>
+    <li>Subtraction is much faster than multiplication.</li>
+    <li>This works because:
+      <ul>
+        <li>$-s=(-1)s$</li>
+        <li>${(ab)}^e=(a^e)(b^e)$ for any $a$, $b$, $e$</li>
+        <li>${(-s)}^{65537}={(-1)}^{65537}s^{65537}$<br/>
+        $=-(s^{65537})=-m$.</li>
+      </ul>
+    </li>
+    <li>~1.9x performance boost.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>RSA Multiplicative Attack</h2>
+  <ul>
+    <li>If $s_a$ and $s_b$ are signatures for $a$ and $b$, then $s_as_b \pmod n$ is a signature for $ab \pmod n$.
+      <ul>
+        <li>${(s_as_b)}^e = {(s_a)}^e{(s_b)}^e = ab$</li>
+      </ul>
+    </li>
+    <li>Such RSA attacks normally stopped by "padding".
+      <ul>
+        <li>Getting a validly-padded message this way is extremely unlikely.</li>
+        <li class="fragment"><strong>But padding is what Nintendo messed up!</strong></li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>Using Multiplicative Attack</h2>
+  <ol>
+    <li>Select random root $r$ such that $1 < r < n$.</li>
+    <li>Calculate multiplier $k = r^{65537} \mod n$.</li>
+    <li>Set $x = r$ and $y = k$.</li>
+    <li>Do forever:
+      <ol>
+        <li>$x$ = ($x$ * $r$) $\mod n$;</li>
+        <li>$y$ = ($y$ * $k$) $\mod n$;</li>
+        <li>if (IsMatch($y$)) return $x$;</li>
+        <li>if (IsMatch($n - y$)) return $n - x$;</li>
+      </ol>
+    </li>
+  </ol>
+</section>
+
+<section>
+  <h2>Doubling Performance Again</h2>
+  <p>We only need $x$ if we found a match, so defer it:</p>
+  <ol>
+    <li>Select random root $r$ such that $1 < r < n$.</li>
+    <li>Calculate multiplier $k = r^{65537} \mod n$.</li>
+    <li>Set $y = k$ and $z = 0$.</li>
+    <li>
+      Do forever:
+      <ol>
+        <li>$z$++;</li>
+        <li>$y$ = ($y$ * $k$) $\mod n$;</li>
+        <li>if (IsMatch($y$)) return $r^z \mod n$;</li>
+        <li>if (IsMatch($n - y$)) return $-r^z \mod n$;</li>
+      </ol>
+    </li>
+  </ol>
+</section>
+
+<section>
+  <h2>Are We There Yet?</h2>
+  <ul>
+    <li>Final powmod much faster than calculating $x$.</li>
+    <li>So now we're down to 1 mul-mod per 2 checks.</li>
+    <li>Can we do better?</li>
+    <li class="fragment"><strong>Of course!</strong></li>
+  </ul>
+</section>
+
+<section>
+  <h2>Shenanigans</h2>
+  <ul>
+    <li>We require any $k$ such that $k = r^{65537} \mod n$ and we know $r$.
+      <ul>
+        <li>Multiplying by any $k$ whose $r$ is known works.</li>
+        <li>(Negation trick: for $k=-1$, $r=-1$.)</li>
+      </ul>
+    </li>
+    <li class="fragment">Do we have a $k$ for which multiplication is easier?</li>
+    <li class="fragment">It turns out we do: legitimate signatures.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Fun with PKCS #1</h2>
+  <ul>
+    <li>PKCS #1 signature format:
+      <ul>
+        <li>0001FFFFFFFF...FFFF00&lt;garbage&gt;</li>
+      </ul>
+    </li>
+    <li>Fast multiplication:
+      <ul>
+        <li>Fact: $(a - b)x = ax - bx$</li>
+        <li>0x0001FFFFFFFF...FFFF00...00 + garbage = 0x000200000000...000 - inv_garbage</li>
+        <li>Multiplying by 0x00020...000 is a left shift: fast!</li>
+        <li>inv_constant is 408 bits.</li>
+        <li>Replace 2048x2048 multiply with a 2048x408 one.</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>GPUs Are Space Heaters</h2>
+  <p>This brute force is perfect for GPUs.</p>
+  <ul>
+    <li>Algorithm is same thing repeated massively.</li>
+    <li>Few conditionals during main loop.</li>
+    <li>No communication needed among operations.</li>
+    <li>No need to "cover" the keyspace.</li>
+    <li>Entire algorithm fits in GPU registers.</li>
+    <li>My cat likes the warmth.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>GPU Implementation</h2>
+  <ul>
+    <li>CUDA or OpenCL?
+      <ul>
+        <li>CUDA tools are better.</li>
+        <li>The current best compute cards are Nvidia.</li>
+        <li>Amazon AWS and Windows Azure use Nvidia.</li>
+        <li class="fragment"><strong>CUDA has add-with-carry asm!</strong></li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>GPU Implementation</h2>
+  <ul>
+    <li>Keeping register count down
+      <ul>
+        <li>Algorithm is register-bound.</li>
+        <li>Use Montgomery reduction GPU algorithm by Kaiyong Zhao:
+          <ul>
+            <li><a href="http://www.comp.hkbu.edu.hk/~pgday/2009/10th_papers/kzhao.pdf">http://www.comp.hkbu.edu.hk/~pgday/2009/10th_papers/kzhao.pdf</a></li>
+          </ul>
+        </li>
+        <li>Can't use PKCS #1 trick, but GPUs win bigly.</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>Hardware</h2>
+  <ul>
+    <li>Home Desktops
+      <ul>
+        <li>3x GeForce GTX 1080 Ti</li>
+        <li>1x GeForce GTX 1080</li>
+        <li>1x GeForce GTX 980 Ti</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>Hardware</h2>
+  <ul>
+    <li>The Cloud™
+      <ul>
+        <li>Amazon AWS "p2.8xlarge" instance</li>
+        <li>8 Tesla K80 GPUs</li>
+        <li>32 Xeon CPU cores (might as well use!)</li>
+        <li>K80 is half as fast as 1080, but there are 8!</li>
+        <li>~230M checks per second combined GPU + CPU</li>
+        <li>US<span>$</span>7/hour (yikes!)</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>Results</h2>
+  <ul>
+    <li>All 6 signatures in ~9 days.
+      <ul>
+        <li>~8,000,000,000,000 checks per signature.</li>
+        <li>So much for 6 months.</li>
+      </ul>
+    </li>
+    <li>Brute-forcer program is open-source:
+      <ul>
+        <li><a href="https://github.com/Myriachan/sighax">https://github.com/Myriachan/sighax</a></li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <img alt="vitcory shibe doge" src="shibe.png">
+  <p><a href="https://twitter.com/SciresM">@SciresM</a>, <a href="https://twitter.com/Myriachan">@Myriachan</a>, <a href="https://github.com/Normmatt">Normmatt</a>, <a href="https://twitter.com/TuxSH">@TuxSH</a>, <a href="https://github.com/hedgeberg">@Hedgeberg</a></p>
+</section>
+</div>
+</div>
+
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.js"></script>
+
+		<script>
+			// More info about config & dependencies:
+			// - https://github.com/hakimel/reveal.js#configuration
+			// - https://github.com/hakimel/reveal.js#dependencies
+			Reveal.initialize({
+        width: 960,
+        height: 800,
+				dependencies: [
+					{ src: 'plugin/markdown/marked.js' },
+					{ src: 'plugin/markdown/markdown.js' },
+					{ src: 'plugin/math/math.js' },
+					{ src: 'plugin/notes/notes.js', async: true },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } }
+				]
+			});
+		</script>
+	</body>
+</html>

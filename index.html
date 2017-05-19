@@ -1,0 +1,280 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>33.5c3</title>
+
+		<link rel="stylesheet" href="css/reveal.css">
+		<link rel="stylesheet" href="css/theme/black.css">
+
+		<!-- Theme used for syntax highlighting of code -->
+		<link rel="stylesheet" href="lib/css/zenburn.css">
+
+		<!-- Printing and PDF exports -->
+		<script>
+			var link = document.createElement( 'link' );
+			link.rel = 'stylesheet';
+			link.type = 'text/css';
+			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+			document.getElementsByTagName( 'head' )[0].appendChild( link );
+		</script>
+	</head>
+	<body>
+<div class="reveal">
+<div class="slides">
+<section>
+  <h1>sighax and boot9strap</h1>
+  <p>Presentation by SciresM</p>
+</section>
+
+<section>
+  <h2>A Short Summary</h2>
+  <p>At 33c3, we learned the following:</p>
+  <ul>
+    <li>boot9 has a broken RSA verification implementation.</li>
+    <li>It's broken because the ASN.1 parser incorrectly verifies at least one of the length fields.</li>
+    <li>We can't perform sighax ourselves, because we can't get the details required from boot9's parser, because we don't have boot9.</li>
+  </ul>
+
+  <p class="fragment">What can we do with that?</p>
+</section>
+
+<section>
+  <h2>A Blast from the Past</h2>
+  <ul>
+    <li>Nintendo loves reusing concepts and code. Firmware has to parse RSA signatures, too.</li>
+    <li>Initial examinations of NATIVE_FIRM, TWL_FIRM and AGB_FIRM look not vulnerable &ndash; though the ASN.1 parser looks very similar to what was described at 33c3, there are stringent padding checks in place.</li>
+    <li>Checks against the sighax vulnerability are present in firmware as early as 0.14 (1.0.0-0), from January 2011.</li>
+    <li class="fragment">The checks aren't present in firmware earlier than that, <strong>including 0.13, which is factory firmware.</strong></li>
+    <li class="fragment">Factory firmware is vulnerable to sighax.</li>
+  </ul>
+</section>
+
+<section>
+  <section>
+    <h2>Factory firmware RSA verification</h2>
+    <img alt="Picture of sighax-vulnerable ASN.1 parser in Hex-Rays" data-src="factory_vuln.png">
+  </section>
+  <section>
+    <li>The checks were added in firmware 1.0.0-0.</li>
+    <li>This means Nintendo knew about the vulnerability when making the New 3DS, and did not fix it.</li>
+    <img class="fragment" alt="wat" data-src="wat.jpg">
+  </section>
+</section>
+
+<section>
+  <h2>Exploiting a parser, blindly</h2>
+  <ul>
+    <li>The parser in factory firmware isn't exactly the same as the one in boot9, as learned when a "perfect" signature for factory firmware's parser failed on boot9. What's next?</li>
+    <li class="fragment">Testing a signature that overflows the factory firmware parser into data-aborting causes the console to show a black screen instead of bootrom error. This means we can crash the bootrom.</li>
+    <li class="fragment">On factory firmware, the "calculated" hash is on the stack near the signature being parsed. This is probably the case for boot9.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Exploiting a parser, blindly</h2>
+  <ul>
+    <li class="fragment">There are only 128 possible locations, relative to the signature, that can be brute forced in reasonable time. It has to be one of those.</li>
+    <li class="fragment">Sure enough, brute forcing signatures for each location shows the "calculated" hash is immediately after the signature on the stack. So we have sighax.</li>
+    <li class="fragment">For those interested in the (complex) math behind optimizing the sighax brute-force, <a href="https://twitter.com/Myriachan">Myria</a> made <a href="math.html">an additional presentation.</a></li>
+  </ul>
+</section>
+
+<section>
+    <h2>The bad ASN.1 Parser</h2>
+    <img alt="Picture of sighax-vulnerable ASN.1 parser in Hex-Rays" data-src="factory_vuln_2.png">
+</section>
+
+<section>
+  <h2>A "Perfect" Signature</h2>
+  <section>
+    <img alt="Encrypted Signature" data-src="enc-sig.png">
+  </section>
+</section>
+
+<section>
+  <h2>How it looks to the parser</h2>
+  <section>
+    <img alt="Decrypted Signature" data-src="dec-sig.png">
+  </section>
+</section>
+
+<section>
+  <h2>So we have sighax. Now what?</h2>
+  <p><strong>We dump the bootroms, of course!</strong>
+</section>
+
+<section>
+  <h2>Exfiltrating boot9</h2>
+  <ul>
+    <li>So we can fakesign our own FIRMs.</li>
+    <li>Meaning we can copy our payload almost anywhere.</li>
+    <li>boot9 has a blacklist of ranges... but we know it's not perfect.</li>
+    <li>From 33c3, only the boot9 data regions are blacklisted.</li>
+    <li class="fragment">Can we find a region that isn't a boot9 data region but is still dangerous?</li>
+  </ul>
+</section>
+
+<section>
+  <h2>ARM9 Memory Map</h2>
+  <table style="font-size: 70%">
+    <tbody>
+    <tr><th>Region</th><th>Address</th><th>Size</th><th>Description</th></tr>
+    <tr><td>0</td><td><code>0x20000000</code></td><td><code>0x08000000</code></td><td>FCRAM</td></tr>
+    <tr class="fragment visible highlight-green"><td>1</td><td><code>0x10000000</code></td><td><code>0x10000000</code></td><td>I/O Registers</td></tr>
+    <tr><td>2</td><td><code>0x08000000</code></td><td><code>0x00100000</code></td><td>ARM9-only internal memory ("arm9mem")</td></tr>
+    <tr><td>3</td><td><code>0x08000000</code></td><td><code>0x00000400</code></td><td>arm9mem<small> (different permissions, details irrelevant)</small></td></tr>
+    <tr><td>4</td><td><code>0xFFF00000</code></td><td><code>0x00004000</code></td><td>Data tightly-coupled memory (DTCM)</td></tr>
+    <tr><td>5</td><td><code>0x07FF8000</code></td><td><code>0x00008000</code></td><td>Instruction tightly-coupled memory (ITCM)</td></tr>
+    <tr><td>6</td><td><code>0xFFFF0000</code></td><td><code>0x00010000</code></td><td>Boot9</td></tr>
+    <tr><td>7</td><td><code>0x1FFFE000</code></td><td><code>0x00000800</code></td><td>AXI WRAM</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>NDMA</h2>
+  <section>
+    <ul>
+      <li>We can copy anything almost anywhere.</li>
+      <li>This includes I/O registers.</li>
+      <li class="fragment">The NDMA engine is a memory mapped I/O register. This means we can copy data over the NDMA registers, triggering DMA, letting us copy anywhere.</li>
+    </ul>
+  </section>
+  <section>
+    <img alt="NDMA can access the (unprotected) part of the bootrom." data-src="ndma.png">
+    <p class="fragment">Oh.</p>
+  </section>
+</section>
+
+<section>
+  <h2>NDMA Parameters</h2>
+  <p>For an NDMA copy request, we need to set:</p>
+  <ul>
+    <li>the global control register to <code>high priority</code>,</li>
+    <li>the source address (<code>0xFFFF8000</code>, the address of the protected boot9),</li>
+    <li>the destination address (any safe place in arm9mem will do),</li>
+    <li>how much data to transfer (32<span style="white-space: nowrap">&thinsp;</span>KiB, or 8192 words)</li>
+    <li>some timing data</li>
+    <li>how much to transfer per cycle</li>
+    <li class="fragment">And now we just copy that to <code>0x10002000</code> for a copy request!</li>
+  </ul>
+</section>
+
+<section>
+  <h1>Works for me, too</h1>
+  <p>SHA-512 (boot9):</p>
+  <p>5addf30ecb46c624fa97bf1e83303ce5<br>
+  d36fabb4525c08c966cbaf0a397fe4c3<br>
+  3d8a4ad17fd0f4f509f547947779e1b2<br>
+  db32abc0471e785cacb3e2dde9b8c492</p>
+</section>
+
+<section data-background-image="Billy_Mays_Portrait_Cropped.jpg" data-background-size="contain">
+  <h1>But wait, there's more!</h1>
+</section>
+
+<section>
+  <h2>boot9strap: Reliable boot9/boot11 code execution</h2>
+  <ul>
+    <li>We can copy data anywhere during firm loading.</li>
+    <li>Including:
+      <ul>
+        <li class="fragment">the exception vectors (using NDMA to bypass the blacklist), and</li>
+        <li class="fragment">NULL.</li>
+      </ul>
+    </li>
+    <li class="fragment">That's all we need for a data abort, isn't it?</li>
+    <li class="fragment"><strong>It is!</strong></li>
+  </ul>
+</section>
+
+<section>
+  <h2>boot9strap: Big picture idea</h2>
+  <ul>
+    <li class="fragment">Section 0: Copy an ARM11 payload into AXI WRAM.</li>
+    <li class="fragment">Section 1: Copy an ARM9 payload into arm9mem.</li>
+    <li class="fragment">Section 2: Copy a payload over the NDMA registers that overwrites the data abort vector in arm9mem.</li>
+    <li class="fragment">Section 3: Load anything to NULL.</li>
+    <li class="fragment">???</li>
+    <li class="fragment">Profit!</li>
+  </ul>
+</section>
+
+<section>
+  <h2>boot9strap: Technical implementation</h2>
+  <ul>
+    <li>Getting execution during boot9 via data abort is really cool. But it'd also be nice to get execution under boot11. How can we?</li>
+    <li class="fragment">boot9 dereferences some function pointers from DTCM, and calls them if they aren't NULL (they normally are).</li>
+    <li class="fragment">Our poisoned data abort vector can overwrite two of these to point at our code, then return to boot9 and let it resume normally.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>boot9strap: Technical implementation</h2>
+  <ul>
+    <li>Later on, boot9 will call the first of those function pointers (<code>0xFFF00058</code>). This will wait for boot11 to finish a task by watching axiwram, then overwrite a function pointer (<code>0x1FFE802C</code>) it will call later.</li>
+    <li class="fragment">Immediately before lockout, boot9/boot11 will each dereference function pointers we have poisoned (<code>0xFFF0005C</code>, <code>0x1FFE802C</code> respectively).</li>
+    <li class="fragment">We can execute arbitrary code before bootrom lockout under both boot9 and boot11.</li>
+    <li class="fragment">Bootrom dumps for all!</li>
+  </ul>
+</section>
+
+<section>
+  <h1>Works for me, 2: <small>Electric Boogaloo</small></h1>
+  <p>SHA-512 (boot11):</p>
+  <p>c3f5044321f1ec5a33e09dd021e1117b<br>
+  1b663e37673222944a06b119ea70af92<br>
+  fc6de8547129582131fb9f8896edef7e<br>
+  9a8ef77295c627e0f1cb360b15b533b4</p>
+</section>
+
+<section>
+  <h2>Bonus fail</h2>
+  <ul>
+    <li>Upon disassembling boot9, we notice another huge flaw in the bootrom that wasn't mentioned at 33c3.</li>
+    <li class="fragment">Before trying to boot from NAND, the bootrom checks to see if a key combination (Start + Select + X) is being held, and whether the shell is closed.</li>
+    <li class="fragment">If so, it tries to boot from an inserted NTR (Nintendo DS) cartridge.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Bonus fail</h2>
+  <ul>
+    <li>Combined with sighax/boot9strap, this allows one to make a malicious fake DS cartridge, so that holding down a button combination on boot gives you bootrom code execution.</li>
+    <li class="fragment">Nintendo tried to make it not possible to abuse by requiring the shell to be closed...</li>
+    <li class="fragment">But you can just use a magnet.</li>
+    <li class="fragment">This, like sighax, is also not fixable.</li>
+    <li class="fragment">The NTR cartridge was likely meant to be used for either the factory setup or as a means of recovering bricked NANDs. However, we'll never know for sure.</li>
+  </ul>
+</section>
+
+<section>
+  <img alt="vitcory shibe doge" src="shibe.png">
+  <p><a href="https://twitter.com/SciresM">@SciresM</a>, <a href="https://twitter.com/Myriachan">@Myriachan</a>, <a href="https://github.com/Normmatt">Normmatt</a>, <a href="https://twitter.com/TuxSH">@TuxSH</a>, <a href="https://github.com/hedgeberg">@Hedgeberg</a></p>
+</section>
+</div>
+</div>
+
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.js"></script>
+
+		<script>
+			// More info about config & dependencies:
+			// - https://github.com/hakimel/reveal.js#configuration
+			// - https://github.com/hakimel/reveal.js#dependencies
+			Reveal.initialize({
+        width: 960,
+        height: 800,
+				dependencies: [
+					{ src: 'plugin/markdown/marked.js' },
+					{ src: 'plugin/markdown/markdown.js' },
+					{ src: 'plugin/notes/notes.js', async: true },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } }
+				]
+			});
+		</script>
+	</body>
+</html>
